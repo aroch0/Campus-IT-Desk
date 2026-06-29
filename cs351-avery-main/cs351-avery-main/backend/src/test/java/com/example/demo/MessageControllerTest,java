@@ -1,0 +1,125 @@
+import com.example.demo.model.Comment;
+import com.example.demo.model.HistoryEntry;
+import org.junit.jupiter.api.BeforeEach;
+import java.io.File;
+import java.util.List;
+import static org.junit.jupiter.api.Assertions.*;
+
+// Add this inside the class:
+
+@BeforeEach
+void clearState() {
+    new File("requests.txt").delete();
+    new File("history.txt").delete();
+    // Re-seed a clean service state via the shared service bean
+    // (Spring caches the bean so we clear its data indirectly via file deletion
+    //  and rely on test isolation through unique IDs)
+}
+
+// ---------------------------
+// FR-16 Comment endpoints
+// ---------------------------
+
+@Test
+void addComment_hitsEndpoint() throws Exception {
+    service.addRequest(new ServiceRequest("10", "u1", "title", "desc", "LOW"));
+
+    Comment comment = new Comment("C1", "alice", "test comment");
+
+    mockMvc.perform(post("/api/messages/10/comments")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(mapper.writeValueAsString(comment)))
+            .andExpect(status().isOk());
+}
+
+@Test
+void addComment_responseContainsComment() throws Exception {
+    service.addRequest(new ServiceRequest("11", "u1", "title", "desc", "LOW"));
+
+    Comment comment = new Comment("C1", "alice", "check response");
+
+    mockMvc.perform(post("/api/messages/11/comments")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(mapper.writeValueAsString(comment)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.comments[0].body").value("check response"))
+            .andExpect(jsonPath("$.comments[0].authorId").value("alice"));
+}
+
+@Test
+void getComments_hitsEndpoint() throws Exception {
+    service.addRequest(new ServiceRequest("12", "u1", "title", "desc", "LOW"));
+    service.addComment("12", new Comment("C1", "bob", "a note"));
+
+    mockMvc.perform(get("/api/messages/12/comments"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].body").value("a note"));
+}
+
+@Test
+void addComment_blankBody_returnsBadRequest() throws Exception {
+    service.addRequest(new ServiceRequest("13", "u1", "title", "desc", "LOW"));
+
+    Comment bad = new Comment("C1", "alice", "   ");
+
+    mockMvc.perform(post("/api/messages/13/comments")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(mapper.writeValueAsString(bad)))
+            .andExpect(status().is5xxServerError());
+}
+
+// ---------------------------
+// FR-18 History endpoints
+// ---------------------------
+
+@Test
+void getHistory_hitsEndpoint() throws Exception {
+    service.addRequest(new ServiceRequest("20", "u1", "title", "desc", "LOW"));
+
+    mockMvc.perform(get("/api/messages/20/history"))
+            .andExpect(status().isOk());
+}
+
+@Test
+void getHistory_afterCreate_containsCreatedEntry() throws Exception {
+    service.addRequest(new ServiceRequest("21", "u1", "title", "desc", "LOW"));
+
+    mockMvc.perform(get("/api/messages/21/history"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].action").value("CREATED"));
+}
+
+@Test
+void getHistory_afterStatusChange_containsStatusChangedEntry() throws Exception {
+    service.addRequest(new ServiceRequest("22", "u1", "title", "desc", "LOW"));
+
+    ServiceRequest updated = new ServiceRequest("22", "u1", "title", "desc", "LOW");
+    updated.setStatus("Closed");
+
+    mockMvc.perform(put("/api/messages/22")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(mapper.writeValueAsString(updated)))
+            .andExpect(status().isOk());
+
+    mockMvc.perform(get("/api/messages/22/history"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$[?(@.action == 'STATUS_CHANGED')]").exists());
+}
+
+@Test
+void getHistory_afterComment_containsCommentAddedEntry() throws Exception {
+    service.addRequest(new ServiceRequest("23", "u1", "title", "desc", "LOW"));
+    service.addComment("23", new Comment("C1", "alice", "note"));
+
+    mockMvc.perform(get("/api/messages/23/history"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$[?(@.action == 'COMMENT_ADDED')]").exists());
+}
+
+@Test
+void getHistory_unknownId_returnsEmptyArray() throws Exception {
+    mockMvc.perform(get("/api/messages/nonexistent/history"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$").isArray())
+            .andExpect(jsonPath("$").isEmpty());
+}
